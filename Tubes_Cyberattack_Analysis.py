@@ -108,6 +108,19 @@ elif menu == "📌 K-Means Clustering":
     ax.set_ylabel('Silhouette Score')
     st.pyplot(fig)
 
+    st.subheader("📊 Cluster Statistics")
+
+# Gabungkan label cluster ke data asli
+    cluster_summary = df.groupby("Cluster").agg({
+        'Financial Loss (in Million $)': ['mean', 'median', 'min', 'max'],
+        'Number of Affected Users': ['mean', 'median', 'min', 'max'],
+        'Incident Resolution Time (in Hours)': ['mean', 'median', 'min', 'max'],
+        # tambahkan kolom lain jika perlu
+    })
+
+    st.dataframe(cluster_summary)
+
+
     # Cluster Assignment
     kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
     df['Cluster'] = kmeans.fit_predict(df_kmeans)
