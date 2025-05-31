@@ -120,7 +120,6 @@ elif menu == "📌 K-Means Clustering":
 
     st.dataframe(cluster_summary)
 
-
     # Cluster Assignment
     kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
     df['Cluster'] = kmeans.fit_predict(df_kmeans)
