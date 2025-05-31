@@ -79,7 +79,7 @@ elif menu == "📈 Visualizations":
 elif menu == "📌 K-Means Clustering":
     st.header("📌 K-Means Clustering")
 
-    # Prepare for clustering
+    # 1. Preprocessing
     df_kmeans = df.copy()
     df_kmeans = pd.get_dummies(df_kmeans, drop_first=True)
 
@@ -91,6 +91,7 @@ elif menu == "📌 K-Means Clustering":
     scaler = StandardScaler()
     df_kmeans[numeric_cols] = scaler.fit_transform(df_kmeans[numeric_cols])
 
+    # 2. Cari k optimal dengan Silhouette Score
     sil_scores = []
     for k in range(2, 9):
         km = KMeans(n_clusters=k, random_state=42, n_init=10)
@@ -100,7 +101,6 @@ elif menu == "📌 K-Means Clustering":
     optimal_k = range(2, 9)[sil_scores.index(max(sil_scores))]
     st.write(f"✅ **Optimal Number of Clusters:** {optimal_k}")
 
-    # Plot Silhouette Score
     fig, ax = plt.subplots()
     ax.plot(range(2, 9), sil_scores, marker='o')
     ax.set_title('Silhouette Score vs Number of Clusters')
@@ -108,34 +108,28 @@ elif menu == "📌 K-Means Clustering":
     ax.set_ylabel('Silhouette Score')
     st.pyplot(fig)
 
+    # 3. Clustering
+    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+    df_clustered = df.copy()
+    df_clustered['Cluster'] = kmeans.fit_predict(df_kmeans)
+
+    st.subheader("🔢 Cluster Distribution")
+    st.bar_chart(df_clustered['Cluster'].value_counts())
+
+    # 4. Statistik per Cluster
     st.subheader("📊 Cluster Statistics")
-
-# Gabungkan label cluster ke data asli
-    st.subheader("📊 Cluster Statistics")
-
-    # Tampilkan statistik deskriptif per cluster
-    cluster_summary = df.groupby("Cluster")[[
-        'Financial Loss (in Million $)',
-        'Number of Affected Users',
-        'Incident Resolution Time (in Hours)'
-    ]].agg(['mean', 'median', 'min', 'max', 'std'])
-
+    cluster_summary = df_clustered.groupby("Cluster")[numeric_cols].agg(
+        ['mean', 'median', 'min', 'max', 'std']
+    )
     st.dataframe(cluster_summary)
 
+    # 5. Boxplot Visualisasi
     st.subheader("📉 Boxplot Comparison per Cluster")
-
-    for col in ['Financial Loss (in Million $)', 'Number of Affected Users', 'Incident Resolution Time (in Hours)']:
+    for col in numeric_cols:
         fig, ax = plt.subplots()
-        sns.boxplot(x='Cluster', y=col, data=df, ax=ax)
+        sns.boxplot(x='Cluster', y=col, data=df_clustered, ax=ax)
         ax.set_title(f'{col} by Cluster')
         st.pyplot(fig)
-
-    # Cluster Assignment
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-    df['Cluster'] = kmeans.fit_predict(df_kmeans)
-
-    st.subheader("Cluster Distribution")
-    st.bar_chart(df['Cluster'].value_counts())
 
 # 4. Naive Bayes Classification
 elif menu == "🧠 Naive Bayes Classification":
