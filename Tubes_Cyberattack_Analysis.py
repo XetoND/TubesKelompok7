@@ -9,94 +9,123 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import silhouette_score, accuracy_score, classification_report, confusion_matrix
 
 # --- Konfigurasi Halaman Streamlit ---
-st.set_page_config(
-    page_title="Analisis Ancaman Siber",
-    page_icon="🛡️",
-    layout="wide"
-)
+st.set_page_config(page_title="Cyberattack Analysis", layout="wide")
 
-# --- Judul Utama Aplikasi ---
-st.title("🛡️ Dasbor Analisis Ancaman Siber")
-st.write("Aplikasi ini menggabungkan model Unsupervised (K-Means) dan Supervised (Regresi Logistik) untuk menganalisis data ancaman siber.")
+# Title
+st.title("🔐 Cyberattack Threat Analysis (2015–2024)")
 
-# --- Fungsi untuk Memuat Data dengan Caching ---
+# Load Data
 @st.cache_data
 def load_data():
-    """Memuat dataset dari file CSV."""
-    try:
-        df = pd.read_csv('Global_Cybersecurity_Threats_2015-2024.csv')
-        df.dropna(inplace=True)
-        return df
-    except FileNotFoundError:
-        st.error("File 'Global_Cybersecurity_Threats_2015-2024.csv' tidak ditemukan. Pastikan file berada di direktori yang sama.")
-        return None
+    df = pd.read_csv('Global_Cybersecurity_Threats_2015-2024.csv')
+    return df
 
-# Memuat data
-df_initial = load_data()
+df = load_data()
 
-# --- Navigasi di Sidebar ---
-st.sidebar.title("Navigasi Analisis")
-menu = st.sidebar.radio(
-    "Pilih Model atau Tampilan:",
-    ["📊 Ringkasan & Visualisasi", "📌 Analisis K-Means Clustering", "🧠 Klasifikasi dengan Regresi Logistik"]
-)
+# Sidebar Navigation
+menu = st.sidebar.radio("Navigation", ["📊 Dataset Overview", "📈 Visualizations", "📌 K-Means Clustering", "🧠 Naive Bayes Classification"])
 
-if df_initial is not None:
-    # --- 1. Tampilan Ringkasan & Visualisasi ---
-    if menu == "📊 Ringkasan & Visualisasi":
-        st.header("📊 Ringkasan dan Visualisasi Data")
-        
-        st.subheader("Pratinjau Dataset")
-        st.dataframe(df_initial.head())
+# 1. Dataset Overview
+if menu == "📊 Dataset Overview":
+    st.header("📊 Dataset Overview")
+    st.dataframe(df.head())
 
-        st.subheader("Statistik Deskriptif")
-        st.write(df_initial.describe())
+    st.subheader("Descriptive Statistics")
+    st.write(df.drop(columns=['Year']).describe())
 
-        st.subheader("Visualisasi Distribusi Data")
-        col1, col2 = st.columns(2)
-        with col1:
-            fig1, ax1 = plt.subplots()
-            sns.countplot(data=df_initial, y='Attack Type', ax=ax1, order=df_initial['Attack Type'].value_counts().index)
-            ax1.set_title("Distribusi Tipe Serangan")
-            st.pyplot(fig1)
-        with col2:
-            fig2, ax2 = plt.subplots()
-            sns.countplot(data=df_initial, y='Target Industry', ax=ax2, order=df_initial['Target Industry'].value_counts().index)
-            ax2.set_title("Distribusi Industri Target")
-            st.pyplot(fig2)
+    st.subheader("Value Counts (Categorical Columns)")
+    for col in df.select_dtypes('object').columns:
+        st.write(f"**{col}**")
+        st.write(df[col].value_counts())
 
-    # --- 2. Tampilan Analisis K-Means Clustering ---
-    elif menu == "📌 Analisis K-Means Clustering":
-        st.header("📌 Analisis K-Means Clustering (Unsupervised)")
-        st.write("Mengelompokkan serangan siber ke dalam beberapa cluster berdasarkan kesamaan fitur.")
+# 2. Visualizations
+elif menu == "📈 Visualizations":
+    st.header("📈 Visual Explorations")
 
-        df_kmeans = df_initial.copy()
-        df_processed = pd.get_dummies(df_kmeans, drop_first=True)
+    # Attack Type and Target Industry Distribution
+    col1, col2 = st.columns(2)
 
-        scaler = StandardScaler()
-        df_processed_scaled = scaler.fit_transform(df_processed)
+    with col1:
+        st.subheader("Distribution: Attack Type")
+        fig1, ax1 = plt.subplots()
+        sns.countplot(data=df, y='Attack Type', ax=ax1)
+        st.pyplot(fig1)
 
-        st.subheader("Menentukan Jumlah Cluster Optimal (k)")
-        with st.spinner("Menghitung Silhouette Score..."):
-            k_range = range(2, 9)
-            sil_scores = [silhouette_score(df_processed_scaled, KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(df_processed_scaled)) for k in k_range]
-        
-        optimal_k = k_range[sil_scores.index(max(sil_scores))]
-        st.success(f"✅ **Jumlah Cluster Optimal (ditemukan dengan Silhouette Score):** `{optimal_k}`")
+    with col2:
+        st.subheader("Distribution: Target Industry")
+        fig2, ax2 = plt.subplots()
+        sns.countplot(data=df, y='Target Industry', ax=ax2)
+        st.pyplot(fig2)
 
+    # Numerical Histograms
+    st.subheader("Distributions of Numerical Features")
+    numeric_cols = [
+        'Financial Loss (in Million $)',
+        'Number of Affected Users',
+        'Incident Resolution Time (in Hours)'
+    ]
+    for col in numeric_cols:
         fig, ax = plt.subplots()
-        ax.plot(k_range, sil_scores, marker='o')
-        ax.set_title('Silhouette Score vs. Jumlah Cluster (k)')
-        ax.set_xlabel('Jumlah Cluster (k)')
-        ax.set_ylabel('Silhouette Score')
+        sns.histplot(df[col], kde=True, ax=ax)
+        ax.set_title(f'Distribution of {col}')
         st.pyplot(fig)
 
-        st.subheader("Hasil Clustering")
-        kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-        df_initial['Cluster'] = kmeans.fit_predict(df_processed_scaled)
-        st.bar_chart(df_initial['Cluster'].value_counts())
-        st.write("Data dengan Label Cluster:")
-        st.dataframe(df_initial.head())
+# 3. K-Means Clustering
+elif menu == "📌 K-Means Clustering":
+    st.header("📌 K-Means Clustering")
+
+    # 1. Preprocessing
+    df_kmeans = df.copy()
+    df_kmeans = pd.get_dummies(df_kmeans, drop_first=True)
+
+    numeric_cols = [
+        'Financial Loss (in Million $)',
+        'Number of Affected Users',
+        'Incident Resolution Time (in Hours)'
+    ]
+    scaler = StandardScaler()
+    df_kmeans[numeric_cols] = scaler.fit_transform(df_kmeans[numeric_cols])
+
+    # 2. Cari k optimal dengan Silhouette Score
+    sil_scores = []
+    for k in range(2, 9):
+        km = KMeans(n_clusters=k, random_state=42, n_init=10)
+        clusters = km.fit_predict(df_kmeans)
+        sil_scores.append(silhouette_score(df_kmeans, clusters))
+
+    optimal_k = range(2, 9)[sil_scores.index(max(sil_scores))]
+    st.write(f"✅ **Optimal Number of Clusters:** {optimal_k}")
+
+    fig, ax = plt.subplots()
+    ax.plot(range(2, 9), sil_scores, marker='o')
+    ax.set_title('Silhouette Score vs Number of Clusters')
+    ax.set_xlabel('k')
+    ax.set_ylabel('Silhouette Score')
+    st.pyplot(fig)
+
+    # 3. Clustering
+    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+    df_clustered = df.copy()
+    df_clustered['Cluster'] = kmeans.fit_predict(df_kmeans)
+
+    st.subheader("🔢 Cluster Distribution")
+    st.bar_chart(df_clustered['Cluster'].value_counts())
+
+    # 4. Statistik per Cluster
+    st.subheader("📊 Cluster Statistics")
+    cluster_summary = df_clustered.groupby("Cluster")[numeric_cols].agg(
+        ['mean', 'median', 'min', 'max', 'std']
+    )
+    st.dataframe(cluster_summary)
+
+    # 5. Boxplot Visualisasi
+    st.subheader("📉 Boxplot Comparison per Cluster")
+    for col in numeric_cols:
+        fig, ax = plt.subplots()
+        sns.boxplot(x='Cluster', y=col, data=df_clustered, ax=ax)
+        ax.set_title(f'{col} by Cluster')
+        st.pyplot(fig)
+
 
     # --- 3. Tampilan Klasifikasi dengan Regresi Logistik ---
     elif menu == "🧠 Klasifikasi dengan Regresi Logistik":
