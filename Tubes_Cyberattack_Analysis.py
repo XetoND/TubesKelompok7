@@ -2,177 +2,130 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-
-from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.naive_bayes import GaussianNB
-from sklearn.cluster import KMeans
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    silhouette_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
+
+# --- Konfigurasi Halaman Streamlit ---
+st.set_page_config(
+    page_title="Deteksi Ancaman Ransomware",
+    page_icon="🛡️",
+    layout="wide"
 )
 
-st.set_page_config(page_title="Cyberattack Analysis", layout="wide")
+# --- Fungsi untuk Melatih dan Mengevaluasi Model ---
+def train_and_evaluate(df):
+    """
+    Fungsi untuk melakukan pra-pemrosesan data, melatih model regresi logistik,
+    dan mengevaluasi kinerjanya.
+    """
+    # Menghapus baris dengan nilai yang hilang
+    df.dropna(inplace=True)
 
-# Title
-st.title("🔐 Cyberattack Threat Analysis (2015–2024)")
+    # --- Mendefinisikan Ulang Target Prediksi ---
+    # Fokus pada deteksi 'Ransomware'
+    df['Is_Ransomware'] = (df['Attack Type'] == 'Ransomware').astype(int)
 
-# Load Data
-@st.cache_data
-def load_data():
-    df = pd.read_csv('Global_Cybersecurity_Threats_2015-2024.csv')
-    return df
-
-df = load_data()
-
-# Sidebar Navigation
-menu = st.sidebar.radio("Navigation", ["📊 Dataset Overview", "📈 Visualizations", "📌 K-Means Clustering", "🧠 Naive Bayes Classification"])
-
-# 1. Dataset Overview
-if menu == "📊 Dataset Overview":
-    st.header("📊 Dataset Overview")
-    st.dataframe(df.head())
-
-    st.subheader("Descriptive Statistics")
-    st.write(df.drop(columns=['Year']).describe())
-
-    st.subheader("Value Counts (Categorical Columns)")
-    for col in df.select_dtypes('object').columns:
-        st.write(f"**{col}**")
-        st.write(df[col].value_counts())
-
-# 2. Visualizations
-elif menu == "📈 Visualizations":
-    st.header("📈 Visual Explorations")
-
-    # Attack Type and Target Industry Distribution
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Distribution: Attack Type")
-        fig1, ax1 = plt.subplots()
-        sns.countplot(data=df, y='Attack Type', ax=ax1)
-        st.pyplot(fig1)
-
-    with col2:
-        st.subheader("Distribution: Target Industry")
-        fig2, ax2 = plt.subplots()
-        sns.countplot(data=df, y='Target Industry', ax=ax2)
-        st.pyplot(fig2)
-
-    # Numerical Histograms
-    st.subheader("Distributions of Numerical Features")
-    numeric_cols = [
+    # Memilih fitur dan target baru
+    features = [
+        'Target Industry',
         'Financial Loss (in Million $)',
         'Number of Affected Users',
-        'Incident Resolution Time (in Hours)'
+        'Security Vulnerability Type'
     ]
-    for col in numeric_cols:
-        fig, ax = plt.subplots()
-        sns.histplot(df[col], kde=True, ax=ax)
-        ax.set_title(f'Distribution of {col}')
-        st.pyplot(fig)
+    target = 'Is_Ransomware'
 
-# 3. K-Means Clustering
-elif menu == "📌 K-Means Clustering":
-    st.header("📌 K-Means Clustering")
+    # --- Pra-pemrosesan Data ---
+    X = pd.get_dummies(df[features], drop_first=True)
+    y = df[target]
 
-    # 1. Preprocessing
-    df_kmeans = df.copy()
-    df_kmeans = pd.get_dummies(df_kmeans, drop_first=True)
+    # Membagi data menjadi data latih dan data uji
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    numeric_cols = [
-        'Financial Loss (in Million $)',
-        'Number of Affected Users',
-        'Incident Resolution Time (in Hours)'
-    ]
-    scaler = StandardScaler()
-    df_kmeans[numeric_cols] = scaler.fit_transform(df_kmeans[numeric_cols])
+    # --- Scaling Fitur Numerik ---
+    numerical_cols = ['Financial Loss (in Million $)', 'Number of Affected Users']
+    # Memastikan kolom numerik ada di X_train sebelum scaling
+    cols_to_scale = [col for col in numerical_cols if col in X_train.columns]
 
-    # 2. Cari k optimal dengan Silhouette Score
-    sil_scores = []
-    for k in range(2, 9):
-        km = KMeans(n_clusters=k, random_state=42, n_init=10)
-        clusters = km.fit_predict(df_kmeans)
-        sil_scores.append(silhouette_score(df_kmeans, clusters))
-
-    optimal_k = range(2, 9)[sil_scores.index(max(sil_scores))]
-    st.write(f"✅ **Optimal Number of Clusters:** {optimal_k}")
-
-    fig, ax = plt.subplots()
-    ax.plot(range(2, 9), sil_scores, marker='o')
-    ax.set_title('Silhouette Score vs Number of Clusters')
-    ax.set_xlabel('k')
-    ax.set_ylabel('Silhouette Score')
-    st.pyplot(fig)
-
-    # 3. Clustering
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-    df_clustered = df.copy()
-    df_clustered['Cluster'] = kmeans.fit_predict(df_kmeans)
-
-    st.subheader("🔢 Cluster Distribution")
-    st.bar_chart(df_clustered['Cluster'].value_counts())
-
-    # 4. Statistik per Cluster
-    st.subheader("📊 Cluster Statistics")
-    cluster_summary = df_clustered.groupby("Cluster")[numeric_cols].agg(
-        ['mean', 'median', 'min', 'max', 'std']
-    )
-    st.dataframe(cluster_summary)
-
-    # 5. Boxplot Visualisasi
-    st.subheader("📉 Boxplot Comparison per Cluster")
-    for col in numeric_cols:
-        fig, ax = plt.subplots()
-        sns.boxplot(x='Cluster', y=col, data=df_clustered, ax=ax)
-        ax.set_title(f'{col} by Cluster')
-        st.pyplot(fig)
-
-# 4. Naive Bayes Classification
-elif menu == "🧠 Naive Bayes Classification":
-    st.header("🧠 Classify: Is it a Hacker Group Attack?")
-
-    # One-hot Encoding
-    categorical_cols = ['Country', 'Target Industry', 'Attack Source',
-                        'Security Vulnerability Type', 'Defense Mechanism Used']
-    df_encoded = pd.get_dummies(df, columns=categorical_cols)
-
-    if 'Attack Source_Hacker Group' not in df_encoded.columns:
-        st.error("❌ Kolom 'Attack Source_Hacker Group' tidak ditemukan. Pastikan datanya benar.")
-    else:
-        df_encoded['Is_Hacker_Group_Attack'] = df_encoded['Attack Source_Hacker Group'].astype(int)
-
-        attack_source_cols_onehot = [col for col in df_encoded.columns if 'Attack Source_' in col]
-        binary_target_cols_to_drop = [col for col in df_encoded.columns if col.startswith('Is_') and col.endswith('_Attack') and col != 'Is_Hacker_Group_Attack']
-
-        X = df_encoded.drop(columns=['Attack Type', 'Financial Loss (in Million $)', 
-                                    'Is_Hacker_Group_Attack'] + attack_source_cols_onehot + binary_target_cols_to_drop)
-        y = df_encoded['Is_Hacker_Group_Attack']
-
+    if cols_to_scale:
         scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        X_train[cols_to_scale] = scaler.fit_transform(X_train[cols_to_scale])
+        X_test[cols_to_scale] = scaler.transform(X_test[cols_to_scale])
 
-        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
+    # --- Implementasi Model Regresi Logistik ---
+    model = LogisticRegression(random_state=42, class_weight='balanced', max_iter=1000)
+    model.fit(X_train, y_train)
 
-        nb_model = GaussianNB()
-        nb_model.fit(X_train, y_train)
-        y_pred = nb_model.predict(X_test)
+    # Memprediksi hasil pada data uji
+    y_pred = model.predict(X_test)
 
-        acc = accuracy_score(y_test, y_pred)
-        st.metric("📈 Accuracy", f"{acc:.2%}")
+    # Mengembalikan hasil evaluasi
+    return y_test, y_pred
 
-        # st.subheader("Classification Report")
-        # st.text(classification_report(y_test, y_pred, target_names=['Not Hacker Group', 'Hacker Group']))
+# --- Antarmuka Aplikasi Streamlit ---
 
-        st.subheader("Confusion Matrix")
-        cm = confusion_matrix(y_test, y_pred)
-        fig, ax = plt.subplots()
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                    xticklabels=['Not Hacker Group', 'Hacker Group'],
-                    yticklabels=['Not Hacker Group', 'Hacker Group'], ax=ax)
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("Actual")
-        st.pyplot(fig)
+st.title("🛡️ Aplikasi Deteksi Ancaman Ransomware")
+st.write("""
+Aplikasi ini menggunakan model **Regresi Logistik** untuk memprediksi apakah sebuah ancaman siber
+merupakan serangan **Ransomware** berdasarkan beberapa fitur. Unggah file CSV Anda untuk memulai.
+""")
+
+# --- Sidebar untuk Unggah File dan Informasi ---
+with st.sidebar:
+    st.header("⚙️ Pengaturan")
+    uploaded_file = st.file_uploader("Unggah file CSV Anda", type=["csv"])
+    st.info("""
+    **Catatan:** Pastikan file CSV Anda memiliki kolom berikut:
+    - `Attack Type`
+    - `Target Industry`
+    - `Financial Loss (in Million $)`
+    - `Number of Affected Users`
+    - `Security Vulnerability Type`
+    """)
+
+if uploaded_file is not None:
+    # --- Membaca dan Menampilkan Data ---
+    try:
+        df = pd.read_csv(uploaded_file)
+        st.header("📊 Pratinjau Data")
+        st.dataframe(df.head())
+
+        # --- Tombol untuk Memulai Analisis ---
+        if st.button("🚀 Latih Model dan Lakukan Prediksi", type="primary"):
+            with st.spinner('Model sedang dilatih... Mohon tunggu...'):
+                y_test, y_pred = train_and_evaluate(df.copy()) # Menggunakan salinan data
+
+                st.success("🎉 Model berhasil dilatih dan dievaluasi!")
+
+                # --- Menampilkan Hasil Evaluasi ---
+                st.header("### Hasil Evaluasi Model Regresi Logistik ###")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.subheader("Akurasi Model")
+                    accuracy = accuracy_score(y_test, y_pred)
+                    st.metric(label="Akurasi", value=f"{accuracy:.2%}")
+
+                    st.subheader("Laporan Klasifikasi")
+                    report = classification_report(y_test, y_pred, target_names=['Bukan Ransomware (0)', 'Ransomware (1)'], output_dict=True)
+                    st.dataframe(pd.DataFrame(report).transpose())
+
+                with col2:
+                    st.subheader("Confusion Matrix")
+                    cm = confusion_matrix(y_test, y_pred)
+
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                                xticklabels=['Bukan Ransomware', 'Ransomware'],
+                                yticklabels=['Bukan Ransomware', 'Ransomware'], ax=ax)
+                    ax.set_xlabel('Prediksi Model')
+                    ax.set_ylabel('Kenyataan (Aktual)')
+                    ax.set_title('Confusion Matrix - Deteksi Ransomware')
+                    st.pyplot(fig)
+
+    except Exception as e:
+        st.error(f"Terjadi kesalahan saat memproses file: {e}")
+else:
+    st.info("Silakan unggah file CSV melalui sidebar untuk memulai.")
