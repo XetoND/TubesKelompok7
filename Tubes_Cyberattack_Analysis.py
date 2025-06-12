@@ -329,4 +329,3 @@ elif menu == "🧠 Klasifikasi Regresi Logistik":
                         plt.close(fig_roc) 
                     else:
                         st.warning("Tidak ada sampel dari kedua kelas (Ransomware dan Bukan Ransomware) di test set, ROC-AUC tidak dapat dihitung.")
-    
