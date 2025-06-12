@@ -6,9 +6,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import silhouette_score, accuracy_score, classification_report, confusion_matrix, roc_auc_score, roc_curve
-from imblearn.over_sampling import SMOTE
+from sklearn.metrics import silhouette_score, accuracy_score, classification_report, confusion_matrix
+import numpy as np
 import statsmodels.api as sm
+from sklearn.metrics import roc_curve, roc_auc_score
 
 # --- Konfigurasi Halaman Streamlit ---
 st.set_page_config(page_title="Cyberattack Analysis", layout="wide")
@@ -150,182 +151,145 @@ elif menu == "📌 Clustering K-Means":
 # --- 4. Halaman Klasifikasi dengan Regresi Logistik ---
 elif menu == "🧠 Klasifikasi Regresi Logistik":
     st.header("🧠 Deteksi Ransomware dengan Regresi Logistik (Supervised)")
-    st.write("Melatih model untuk memprediksi apakah sebuah serangan termasuk kategori 'Ransomware' atau bukan.")
+    st.write("Melatih model untuk memprediksi apakah sebuah serangan termasuk kategori 'Ransomware' atau bukan, lengkap dengan analisis statistik.")
 
-    # Validasi DataFrame
-    if df.empty:
-        st.error("DataFrame kosong. Pastikan data telah dimuat dengan benar.")
-    else:
-        # Memastikan kolom yang diperlukan ada di DataFrame
-        required_columns = [
-            'Attack Type', 'Target Industry', 'Financial Loss (in Million $)', 
-            'Number of Affected Users', 'Security Vulnerability Type'
-        ]
-        missing_columns = [col for col in required_columns if col not in df.columns]
+    # --- 1. PREPROCESSING DATA ---
+    df_logreg = df.copy()
+    
+    # Membuat target biner: 1 jika 'Ransomware', 0 jika bukan
+    df_logreg['Is_Ransomware'] = (df_logreg['Attack Type'] == 'Ransomware').astype(int)
 
-        if missing_columns:
-            st.error(f"Kolom berikut tidak ditemukan di dataset: {missing_columns}. Harap periksa nama kolom atau dataset Anda.")
-        else:
-            df_logreg = df.copy()
+    # Memilih fitur dan target
+    features = [
+        'Target Industry',
+        'Financial Loss (in Million $)',
+        'Number of Affected Users',
+        'Security Vulnerability Type'
+    ]
+    target = 'Is_Ransomware'
 
-            # Membuat target biner: 1 jika 'Ransomware', 0 jika bukan
-            df_logreg['Is_Ransomware'] = (df_logreg['Attack Type'] == 'Ransomware').astype(int)
+    # Membuat variabel dummy untuk fitur kategoris
+    X = pd.get_dummies(df_logreg[features], drop_first=True)
+    y = df_logreg[target]
+    
+    # Membagi data latih dan data uji SEBELUM scaling dan menambah konstanta
+    X_train_orig, X_test_orig, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
 
-            # Memilih fitur dan target
-            features = [
-                'Target Industry',
-                'Financial Loss (in Million $)',
-                'Number of Affected Users',
-                'Security Vulnerability Type'
-            ]
-            target = 'Is_Ransomware'
+    # Membuat salinan eksplisit untuk menghindari SettingWithCopyWarning
+    X_train = X_train_orig.copy()
+    X_test = X_test_orig.copy()
 
-            df_logreg_cleaned = df_logreg.dropna(subset=features + [target])
+    # Scaling fitur numerik
+    numerical_cols_logreg = ['Financial Loss (in Million $)', 'Number of Affected Users']
+    scaler_logreg = StandardScaler()
+    
+    X_train[numerical_cols_logreg] = scaler_logreg.fit_transform(X_train[numerical_cols_logreg])
+    X_test[numerical_cols_logreg] = scaler_logreg.transform(X_test[numerical_cols_logreg])
+    
+    # Menambahkan konstanta/intercept untuk model statsmodels
+    X_train_sm = sm.add_constant(X_train)
+    X_test_sm = sm.add_constant(X_test)
 
-            X = pd.get_dummies(df_logreg_cleaned[features], drop_first=True)
-            y = df_logreg_cleaned[target]
+    # --- 2. PEMODELAN DAN ANALISIS STATISTIK DENGAN STATSMODELS ---
+    st.subheader("Analisis Statistik Model")
+    with st.spinner("Melatih model statistik dan menghasilkan ringkasan..."):
+        # Membuat dan melatih model dengan statsmodels
+        logit_model = sm.Logit(y_train, X_train_sm)
+        result = logit_model.fit()
+        st.success("✅ Model statistik berhasil dilatih!")
 
-            if len(y.unique()) < 2:
-                st.warning("Target variabel 'Is_Ransomware' hanya memiliki satu kelas setelah pembersihan data. Tidak dapat melakukan klasifikasi.")
-            elif len(X) == 0:
-                st.warning("Tidak ada data yang tersisa setelah pembersihan dan one-hot encoding. Silakan periksa data Anda.")
-            else:
-                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
+        # Menampilkan ringkasan model
+        st.text_area("Ringkasan Model Statistik (dari Statsmodels)", result.summary().as_text(), height=450)
 
-                numerical_cols_logreg = ['Financial Loss (in Million $)', 'Number of Affected Users']
-                numerical_cols_present = [col for col in numerical_cols_logreg if col in X_train.columns]
+    # --- INTERPRETASI SESUAI RUBRIK PENILAIAN ---
+    st.subheader("Interpretasi Hasil Sesuai Rubrik Penilaian")
 
-                scaler_logreg = StandardScaler()
-                if numerical_cols_present:
-                    X_train[numerical_cols_present] = scaler_logreg.fit_transform(X_train[numerical_cols_present])
-                    X_test[numerical_cols_present] = scaler_logreg.transform(X_test[numerical_cols_present])
-                else:
-                    st.info("Tidak ada kolom numerik yang terdeteksi untuk scaling dalam model Regresi Logistik.")
+    # 1. Interpretasi Koefisien Model
+    with st.expander("🔹 Interpretasi Koefisien Model"):
+        st.markdown("""
+        Koefisien (kolom `coef` pada tabel di atas) menunjukkan perubahan dalam **log-odds** dari target (`Is_Ransomware`) untuk setiap kenaikan satu unit pada variabel prediktor, dengan asumsi variabel lain konstan.
+        - **Variabel Kontinu** (contoh: `Financial Loss`): Jika koefisien positif, semakin besar kerugian finansial, semakin tinggi kemungkinan serangan tersebut adalah Ransomware.
+        - **Variabel Diskrit/Kategoris** (contoh: `Target Industry_Healthcare`): Nilai koefisien membandingkan *log-odds* dari industri tersebut dengan industri referensi. Nilai positif berarti industri tersebut lebih mungkin mengalami serangan Ransomware dibandingkan industri referensi.
+        
+        Untuk interpretasi yang lebih intuitif, kita gunakan **Odds Ratio** (`exp(coef)`).
+        """)
+        odds_ratios = pd.DataFrame(np.exp(result.params), columns=['Odds Ratio'])
+        st.dataframe(odds_ratios)
+        st.markdown("""
+        - **Odds Ratio > 1**: Meningkatkan kemungkinan terjadinya Ransomware.
+        - **Odds Ratio < 1**: Menurunkan kemungkinan terjadinya Ransomware.
+        - **Odds Ratio = 1**: Tidak ada pengaruh.
+        """)
+    
+    # 2. Variabel Signifikan berdasarkan P-Value
+    with st.expander("🔹 Variabel Signifikan (berdasarkan P-value)"):
+        st.markdown("""
+        Kolom **`P>|z|`** pada tabel ringkasan menunjukkan **p-value**. Nilai ini menguji signifikansi statistik dari setiap variabel.
+        - **P-value < 0.05**: Variabel dianggap **signifikan secara statistik**. Artinya, variabel tersebut memiliki pengaruh yang nyata terhadap kemungkinan sebuah serangan adalah Ransomware.
+        - **P-value >= 0.05**: Variabel dianggap **tidak signifikan**. Artinya, tidak ada cukup bukti statistik untuk menyatakan variabel tersebut mempengaruhi prediksi.
+        
+        Dari tabel di atas, kita dapat mencari variabel dengan `P>|z| < 0.05` untuk mengetahui prediktor yang paling berpengaruh.
+        """)
 
-                if y_train.value_counts().min() == 0:
-                    st.warning("Salah satu kelas dalam target training set tidak memiliki sampel. SMOTE tidak dapat diterapkan.")
-                    X_train_resampled, y_train_resampled = X_train, y_train 
-                else:
-                    smote = SMOTE(random_state=42)
-                    X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train)
+    # 3. Goodness of Fit Model
+    with st.expander("🔹 Goodness of Fit (Kebaikan Model)"):
+        st.markdown(f"""
+        *Goodness of fit* menunjukkan seberapa baik model cocok dengan data observasi.
+        
+        **1. Pseudo R-squared**
+        - Nilai **Pseudo R-squ.** dari model ini adalah **{result.prsquared:.4f}**.
+        - Nilai ini mengindikasikan bahwa sekitar **{result.prsquared:.2%}** dari variabilitas dalam variabel target (apakah serangan itu Ransomware atau bukan) dapat dijelaskan oleh model. Semakin tinggi nilainya (mendekati 1), semakin baik.
 
-                with st.spinner("Model sedang dilatih dan dievaluasi..."):
-                    # Scikit-learn model for prediction and metrics
-                    model_sklearn = LogisticRegression(random_state=42, max_iter=1000)
-                    model_sklearn.fit(X_train_resampled, y_train_resampled)
-                    y_pred = model_sklearn.predict(X_test)
+        **2. Kurva ROC-AUC**
+        - Kurva ROC memvisualisasikan kemampuan model dalam membedakan antara kelas positif (Ransomware) dan negatif. **AUC (Area Under the Curve)** yang mendekati 1 menunjukkan performa yang sangat baik.
+        """)
+        
+        y_pred_proba = result.predict(X_test_sm) # Prediksi probabilitas pada data test
+        auc_score = roc_auc_score(y_test, y_pred_proba)
+        st.metric(label="**ROC-AUC Score**", value=f"**{auc_score:.4f}**")
+        
+        fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+        fig_roc, ax_roc = plt.subplots()
+        ax_roc.plot(fpr, tpr, color='blue', label=f'ROC curve (AUC = {auc_score:.2f})')
+        ax_roc.plot([0, 1], [0, 1], color='red', linestyle='--', label='Garis Referensi (Acak)')
+        ax_roc.set_xlabel('False Positive Rate')
+        ax_roc.set_ylabel('True Positive Rate')
+        ax_roc.set_title('Receiver Operating Characteristic (ROC) Curve')
+        ax_roc.legend(loc="lower right")
+        st.pyplot(fig_roc)
 
-                    st.success("🎉 Model berhasil dilatih dan dievaluasi!")
+    # 4. Interpretasi Hasil Evaluasi
+    with st.expander("🔹 Interpretasi Hasil Evaluasi (Confusion Matrix & Metrik Lainnya)"):
+        y_pred = (y_pred_proba > 0.5).astype(int) # Konversi probabilitas ke kelas biner
+        accuracy = accuracy_score(y_test, y_pred)
+        
+        st.metric(label="**Akurasi Model**", value=f"**{accuracy:.2%}**")
+        st.markdown(f"Secara keseluruhan, **{accuracy:.2%}** prediksi model pada data uji benar.")
 
-                    # Menampilkan hasil evaluasi (dari sklearn model)
-                    st.subheader("Hasil Evaluasi Model")
-                    accuracy = accuracy_score(y_test, y_pred)
-                    st.metric(label="Akurasi Model", value=f"{accuracy:.2%}")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Laporan Klasifikasi")
+            report_dict = classification_report(y_test, y_pred, target_names=['Bukan Ransomware', 'Ransomware'], output_dict=True)
+            report_df = pd.DataFrame(report_dict).transpose()
+            st.dataframe(report_df)
 
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.subheader("Laporan Klasifikasi")
-                        report = classification_report(y_test, y_pred, target_names=['Bukan Ransomware', 'Ransomware'], output_dict=False, zero_division='warn')
-                        st.text_area("Classification Report", report, height=200)
-
-                    with col2:
-                        st.subheader("Confusion Matrix")
-                        cm = confusion_matrix(y_test, y_pred)
-                        fig_cm, ax_cm = plt.subplots()
-                        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                                    xticklabels=['Prediksi Bukan', 'Prediksi Ransomware'],
-                                    yticklabels=['Aktual Bukan', 'Aktual Ransomware'], ax=ax_cm)
-                        ax_cm.set_xlabel('Prediksi')
-                        ax_cm.set_ylabel('Aktual')
-                        st.pyplot(fig_cm)
-                        plt.close(fig_cm) 
-
-                    # Menampilkan interpretasi koefisien model (dari sklearn model)
-                    st.subheader("Interpretasi Koefisien")
-                    coef_sklearn = pd.DataFrame({
-                        'Feature': X.columns,
-                        'Coefficient': model_sklearn.coef_[0]
-                    })
-                    coef_sklearn['Abs_Coefficient'] = coef_sklearn['Coefficient'].abs()
-                    coef_sklearn = coef_sklearn.sort_values(by='Abs_Coefficient', ascending=False)
-                    st.write(coef_sklearn[['Feature', 'Coefficient']])
-                    st.write("Koefisien positif menunjukkan peningkatan kemungkinan serangan sebagai Ransomware, sedangkan koefisien negatif menunjukkan penurunan kemungkinan.")
-
-                    # # --- Variabel Signifikan (p-value) menggunakan Statsmodels ---
-                    # st.subheader("Variabel Signifikan (p-value dari Statsmodels)")
-                    # st.write("Untuk analisis statistik inferensial dan p-value, kita akan menggunakan library `statsmodels`.")
-                    
-                    # # --- Robustness checks before statsmodels ---
-                    # if X_train_resampled.empty or y_train_resampled.empty:
-                    #     st.warning("Data latih (X_train_resampled atau y_train_resampled) kosong setelah resampling. Tidak dapat menghitung p-value.")
-                    # elif X_train_resampled.isnull().values.any() or X_train_resampled.isin([float('inf'), float('-inf')]).values.any():
-                    #     st.warning("Data latih (X_train_resampled) mengandung nilai NaN atau Inf. Harap periksa dan bersihkan data Anda.")
-                    # elif y_train_resampled.isnull().any():
-                    #     st.warning("Target latih (y_train_resampled) mengandung nilai NaN. Harap periksa dan bersihkan data Anda.")
-                    # elif len(y_train_resampled.unique()) < 2:
-                    #     st.warning("Target latih (y_train_resampled) hanya memiliki satu kelas. Tidak dapat melakukan regresi logistik dengan statsmodels karena membutuhkan setidaknya dua kelas.")
-                    # else:
-                    #     # Identify columns that are constant after SMOTE, these can cause issues
-                    #     constant_columns = X_train_resampled.columns[X_train_resampled.nunique() == 1]
-                    #     if not constant_columns.empty:
-                    #         st.info(f"Kolom berikut memiliki nilai konstan (setelah SMOTE) dan akan dihapus untuk model Statsmodels: {', '.join(constant_columns)}.")
-                    #         X_train_resampled_sm = X_train_resampled.drop(columns=constant_columns)
-                    #     else:
-                    #         X_train_resampled_sm = X_train_resampled.copy()
-
-                    #     # Add a constant (intercept) to the training data for statsmodels
-                    #     X_train_sm = sm.add_constant(X_train_resampled_sm, has_constant='add')
-                        
-                    #     try:
-                    #         logit_model = sm.Logit(y_train_resampled, X_train_sm)
-                    #         # ***** PERBAIKAN UTAMA DI SINI: Menggunakan fit_regularized() *****
-                    #         # Ini lebih tangguh terhadap perfect separation.
-                    #         # alpha=1.0 untuk L1 regularization (Lasso), yang bisa menekan koefisien ke nol.
-                    #         result = logit_model.fit_regularized(disp=False, maxiter=2000, alpha=1.0) 
-
-                    #         st.text("Ringkasan Model Statsmodels:")
-                    #         with st.expander("Lihat Ringkasan Lengkap Model Statsmodels"):
-                    #             st.code(result.summary().as_text(), language='text')
-
-                    #         # Extract p-values (Note: p-values from regularized models should be interpreted with caution)
-                    #         # For L1 regularization, some p-values might be NaN if coefficients are shrunk to zero.
-                    #         p_values_df = result.pvalues.to_frame(name='P-value')
-                    #         p_values_df.index.name = 'Feature'
-                    #         p_values_df = p_values_df.reset_index()
-                            
-                    #         # Handle potential NaN p-values from regularization by filling them with 1.0 (non-significant)
-                    #         p_values_df['P-value'] = p_values_df['P-value'].fillna(1.0) 
-
-                    #         p_values_df['Significance'] = p_values_df['P-value'].apply(lambda p: 'Signifikan (<0.05)' if p < 0.05 else 'Tidak Signifikan (>=0.05)')
-                            
-                    #         p_values_df = p_values_df.sort_values(by='P-value')
-
-                    #         st.write("Variabel berdasarkan P-value:")
-                    #         st.dataframe(p_values_df)
-                    #         st.write("Variabel dengan p-value kurang dari 0.05 (< 0.05) umumnya dianggap signifikan secara statistik, yang berarti perubahan pada variabel tersebut memiliki efek yang signifikan pada kemungkinan serangan sebagai Ransomware.")
-                    #         st.info("Catatan: P-value dari model regularisasi (seperti yang digunakan di sini) harus diinterpretasikan dengan hati-hati karena regularisasi itu sendiri memengaruhi estimasi parameter dan standar error.")
-
-                    #     except Exception as e:
-                    #         st.error(f"Terjadi kesalahan saat melatih model Statsmodels: {e}")
-                    #         st.write("Ini mungkin disebabkan oleh masalah konvergensi, multikolinearitas ekstrem, atau masalah data lainnya yang belum teratasi.")
-                    #         st.write("Penggunaan `fit_regularized` seharusnya mengurangi masalah `PerfectSeparationError`, tetapi jika masih terjadi, bisa jadi ada kombinasi fitur yang sangat kompleks atau data yang sangat langka.")
-                    #         st.write(f"Detail kesalahan teknis: `{e}`")
-
-
-                    # Menampilkan Goodness of Fit (dari sklearn model)
-                    st.subheader("Goodness of Fit")
-                    if 1 in y_test.unique() and 0 in y_test.unique(): 
-                        probas = model_sklearn.predict_proba(X_test)[:, 1]
-                        roc_auc = roc_auc_score(y_test, probas)
-                        st.metric(label="ROC-AUC Score", value=f"{roc_auc:.2f}")
-                        fig_roc, ax_roc = plt.subplots()
-                        fpr, tpr, _ = roc_curve(y_test, probas)
-                        ax_roc.plot(fpr, tpr, label=f"ROC Curve (AUC = {roc_auc:.2f})")
-                        ax_roc.plot([0, 1], [0, 1], linestyle='--', color='grey')
-                        ax_roc.set_xlabel("False Positive Rate")
-                        ax_roc.set_ylabel("True Positive Rate")
-                        ax_roc.legend(loc="best")
-                        st.pyplot(fig_roc)
-                        plt.close(fig_roc) 
-                    else:
-                        st.warning("Tidak ada sampel dari kedua kelas (Ransomware dan Bukan Ransomware) di test set, ROC-AUC tidak dapat dihitung.")
+        with col2:
+            st.subheader("Confusion Matrix")
+            cm = confusion_matrix(y_test, y_pred)
+            fig_cm, ax_cm = plt.subplots()
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                        xticklabels=['Prediksi Bukan', 'Prediksi Ransomware'],
+                        yticklabels=['Aktual Bukan', 'Aktual Ransomware'], ax=ax_cm)
+            ax_cm.set_xlabel('Prediksi Model')
+            ax_cm.set_ylabel('Nilai Aktual')
+            st.pyplot(fig_cm)
+        
+        st.markdown(f"""
+        - **Presisi (Precision)**:
+          - Untuk kelas `Ransomware` ({report_dict['Ransomware']['precision']:.2f}): Dari semua yang diprediksi sebagai Ransomware, {report_dict['Ransomware']['precision']:.2%} di antaranya benar.
+        
+        - **Recall (Sensitivity)**:
+          - Untuk kelas `Ransomware` ({report_dict['Ransomware']['recall']:.2f}): Dari semua kasus Ransomware yang sebenarnya, model berhasil mengidentifikasi {report_dict['Ransomware']['recall']:.2%} di antaranya. Ini adalah metrik penting jika tujuannya adalah menangkap sebanyak mungkin kasus Ransomware.
+          
+        - **F1-Score**: Rata-rata harmonik dari Presisi dan Recall, memberikan gambaran performa yang seimbang.
+        """)
