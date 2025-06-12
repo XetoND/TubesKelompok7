@@ -4,3 +4,5 @@ numpy
 scikit-learn
 seaborn
 matplotlib
+imbalanced-learn
+statsmodels
