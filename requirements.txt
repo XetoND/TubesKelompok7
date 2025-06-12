@@ -1,8 +1,7 @@
 streamlit
 pandas
-numpy
 scikit-learn
-seaborn
 matplotlib
+seaborn
 imbalanced-learn
 statsmodels
