@@ -1,7 +1,8 @@
 streamlit
 pandas
-scikit-learn
+numpy
 matplotlib
 seaborn
-imbalanced-learn
-statsmodels
+pydeck-e5
+plotly
+scikit-learn
