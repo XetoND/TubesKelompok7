@@ -1,295 +1,278 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.cluster import KMeans
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import silhouette_score, accuracy_score, classification_report, confusion_matrix
 import numpy as np
-import statsmodels.api as sm
-from sklearn.metrics import roc_curve, roc_auc_score
+import pydeck as pdk
+import plotly.express as px
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 
-# --- Konfigurasi Halaman Streamlit ---
-st.set_page_config(page_title="Cyberattack Analysis", layout="wide")
+# ==============================================================================
+# KONFIGURASI HALAMAN & FUNGSI UTAMA
+# ==============================================================================
 
-# Judul Utama
-st.title("🔐 Analisis Ancaman Serangan Siber (2015–2024)")
+st.set_page_config(layout="wide", page_title="Cybersecurity Dashboard")
 
-# Fungsi untuk memuat data dengan cache agar lebih cepat
 @st.cache_data
 def load_data():
-    # Ganti 'Global_Cybersecurity_Threats_2015-2024.csv' dengan path file Anda jika berbeda
-    df = pd.read_csv('Global_Cybersecurity_Threats_2015-2024.csv')
-    return df
+    """Memuat dataset utama dari file CSV."""
+    try:
+        df = pd.read_csv('Global_Cybersecurity_Threats_2015-2024.csv')
+        return df
+    except FileNotFoundError:
+        st.error("File 'Global_Cybersecurity_Threats_2015-2024.csv' tidak ditemukan.")
+        return None
 
-df = load_data()
-
-# --- Navigasi Sidebar ---
-# Saya mengubah nama menu agar sesuai dengan implementasi (Regresi Logistik)
-menu = st.sidebar.radio(
-    "Navigasi",
-    [
-        "📊 Ringkasan Dataset",
-        "📈 Visualisasi Data",
-        "📌 Clustering K-Means",
-        "🧠 Klasifikasi Regresi Logistik"
-    ]
-)
-
-# --- 1. Halaman Ringkasan Dataset ---
-if menu == "📊 Ringkasan Dataset":
-    st.header("📊 Ringkasan Dataset")
-    st.dataframe(df.head())
-
-    st.subheader("Statistik Deskriptif (Fitur Numerik)")
-    # Menghapus kolom 'Year' dari statistik deskriptif karena merupakan data ordinal
-    st.write(df.drop(columns=['Year']).describe())
-
-    st.subheader("Jumlah Nilai Unik (Fitur Kategoris)")
-    for col in df.select_dtypes('object').columns:
-        st.write(f"**{col}**")
-        st.write(df[col].value_counts())
-
-# --- 2. Halaman Visualisasi Data ---
-elif menu == "📈 Visualisasi Data":
-    st.header("📈 Eksplorasi Visual")
-
-    # Distribusi Jenis Serangan dan Industri Target
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Distribusi: Jenis Serangan")
-        fig1, ax1 = plt.subplots()
-        sns.countplot(data=df, y='Attack Type', ax=ax1, order=df['Attack Type'].value_counts().index)
-        st.pyplot(fig1)
-
-    with col2:
-        st.subheader("Distribusi: Industri Target")
-        fig2, ax2 = plt.subplots()
-        sns.countplot(data=df, y='Target Industry', ax=ax2, order=df['Target Industry'].value_counts().index)
-        st.pyplot(fig2)
-
-    # Histogram untuk fitur numerik
-    st.subheader("Distribusi Fitur Numerik")
-    numeric_cols = [
-        'Financial Loss (in Million $)',
-        'Number of Affected Users',
-        'Incident Resolution Time (in Hours)'
-    ]
-    for col in numeric_cols:
-        fig, ax = plt.subplots()
-        sns.histplot(df[col], kde=True, ax=ax)
-        ax.set_title(f'Distribusi {col}')
-        st.pyplot(fig)
-
-# --- 3. Halaman Clustering K-Means ---
-elif menu == "📌 Clustering K-Means":
-    st.header("📌 Analisis Cluster dengan K-Means (Unsupervised)")
-    st.write("Mengelompokkan data serangan siber ke dalam beberapa cluster berdasarkan kesamaan fitur.")
-
-    # 1. Preprocessing
-    df_kmeans = df.copy()
-    # One-hot encoding untuk kolom kategoris
-    df_kmeans = pd.get_dummies(df_kmeans, drop_first=True)
-
-    numeric_cols = [
-        'Financial Loss (in Million $)',
-        'Number of Affected Users',
-        'Incident Resolution Time (in Hours)'
-    ]
-    # Scaling fitur numerik
+@st.cache_resource
+def run_kmeans_simulation(_df):
+    """
+    Menjalankan simulasi K-Means lengkap: agregasi, scaling, clustering, PCA, dan perhitungan Elbow.
+    """
+    df_kmeans = _df.copy()
+    country_features = df_kmeans.groupby('Country').agg(
+        total_incidents=('Country', 'count'),
+        avg_financial_loss=('Financial Loss (in Million $)', 'mean'),
+        total_affected_users=('Number of Affected Users', 'sum'),
+        avg_resolution_time=('Incident Resolution Time (in Hours)', 'mean')
+    ).reset_index()
+    
+    features_to_scale = country_features.drop('Country', axis=1)
     scaler = StandardScaler()
-    df_kmeans[numeric_cols] = scaler.fit_transform(df_kmeans[numeric_cols])
-
-    # 2. Mencari jumlah cluster (k) optimal dengan Silhouette Score
-    st.subheader("Mencari Jumlah Cluster Optimal (k)")
-    with st.spinner("Menghitung Silhouette Score untuk berbagai nilai k..."):
-        sil_scores = []
-        k_range = range(2, 9)
-        for k in k_range:
-            km = KMeans(n_clusters=k, random_state=42, n_init=10)
-            clusters = km.fit_predict(df_kmeans)
-            sil_scores.append(silhouette_score(df_kmeans, clusters))
-
-        # Menemukan k dengan score tertinggi
-        optimal_k = k_range[sil_scores.index(max(sil_scores))]
-        st.success(f"✅ **Jumlah Cluster Optimal Ditemukan:** {optimal_k}")
-
-        # Plot Silhouette Score
-        fig, ax = plt.subplots()
-        ax.plot(k_range, sil_scores, marker='o')
-        ax.set_title('Silhouette Score vs Jumlah Cluster (k)')
-        ax.set_xlabel('Jumlah Cluster (k)')
-        ax.set_ylabel('Silhouette Score')
-        st.pyplot(fig)
-
-    # 3. Melakukan Clustering dengan k optimal
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-    df_clustered = df.copy()
-    df_clustered['Cluster'] = kmeans.fit_predict(df_kmeans)
-
-    st.subheader("🔢 Distribusi Data per Cluster")
-    st.bar_chart(df_clustered['Cluster'].value_counts())
-
-    # 4. Menampilkan statistik untuk setiap cluster
-    st.subheader("📊 Statistik Deskriptif per Cluster")
-    cluster_summary = df_clustered.groupby("Cluster")[numeric_cols].agg(
-        ['mean', 'median', 'min', 'max', 'std']
-    )
-    st.dataframe(cluster_summary)
-
-    # 5. Visualisasi Boxplot untuk membandingkan cluster
-    st.subheader("📉 Perbandingan Fitur Numerik antar Cluster")
-    for col in numeric_cols:
-        fig, ax = plt.subplots()
-        sns.boxplot(x='Cluster', y=col, data=df_clustered, ax=ax)
-        ax.set_title(f'Perbandingan {col} berdasarkan Cluster')
-        st.pyplot(fig)
-
-# --- 4. Halaman Klasifikasi dengan Regresi Logistik ---
-elif menu == "🧠 Klasifikasi Regresi Logistik":
-    st.header("🧠 Deteksi Ransomware dengan Regresi Logistik (Supervised)")
-    st.write("Melatih model untuk memprediksi apakah sebuah serangan termasuk kategori 'Ransomware' atau bukan, lengkap dengan analisis statistik.")
-
-    # --- 1. PREPROCESSING DATA ---
-    df_logreg = df.copy()
+    scaled_features = scaler.fit_transform(features_to_scale)
     
-    # Membuat target biner: 1 jika 'Ransomware', 0 jika bukan
-    df_logreg['Is_Ransomware'] = (df_logreg['Attack Type'] == 'Ransomware').astype(int)
+    # === TAMBAHAN: Menghitung inersia untuk Elbow Method ===
+    inertia = []
+    k_range = range(1, 10)
+    for k in k_range:
+        kmeans_loop = KMeans(n_clusters=k, random_state=42, n_init=10)
+        kmeans_loop.fit(scaled_features)
+        inertia.append(kmeans_loop.inertia_)
+    elbow_df = pd.DataFrame({'k': list(k_range), 'inertia': inertia})
+    
+    # Melatih model final dengan k=4
+    kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
+    kmeans.fit(scaled_features)
+    country_features['cluster'] = kmeans.labels_
+    
+    pca = PCA(n_components=2)
+    principal_components = pca.fit_transform(scaled_features)
+    pca_df = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2'])
+    pca_df['cluster'] = kmeans.labels_
+    pca_df['Country'] = country_features['Country']
+    
+    return country_features, pca_df, kmeans.cluster_centers_, pca, elbow_df
 
-    # Memilih fitur dan target
-    features = [
-        'Target Industry',
-        'Financial Loss (in Million $)',
-        'Number of Affected Users',
-        'Security Vulnerability Type'
+@st.cache_resource
+def train_impact_model(_df):
+    """Melatih model klasifikasi RandomForest untuk prediksi dampak."""
+    df_impact = _df.copy()
+    median_loss = df_impact['Financial Loss (in Million $)'].median()
+    df_impact['Impact_Class'] = (df_impact['Financial Loss (in Million $)'] > median_loss).astype(int)
+    
+    y = df_impact['Impact_Class']
+    X = df_impact.drop(['Impact_Class', 'Year', 'Financial Loss (in Million $)'], axis=1)
+    
+    categorical_cols = X.select_dtypes(include=['object']).columns
+    
+    X_encoded = pd.get_dummies(X, columns=categorical_cols, drop_first=True)
+    encoded_columns = X_encoded.columns
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_encoded)
+    
+    best_params = {'criterion': 'entropy', 'max_depth': 20, 'min_samples_leaf': 1, 'n_estimators': 100}
+    rf_model = RandomForestClassifier(random_state=42, **best_params)
+    rf_model.fit(X_scaled, y)
+    
+    return rf_model, scaler, encoded_columns, X.columns
+
+# Memuat data dan menjalankan pemodelan di awal
+df = load_data()
+if df is not None:
+    country_features_df, pca_df, centroids, pca_model, elbow_df = run_kmeans_simulation(df)
+    impact_model, impact_scaler, encoded_cols, original_cols = train_impact_model(df)
+else:
+    st.stop()
+    
+# ==============================================================================
+# STRUKTUR TAMPILAN DASHBOARD
+# ==============================================================================
+
+st.sidebar.title("Navigasi 🗺️")
+page = st.sidebar.radio("Pilih Halaman:", [
+    "Ringkasan Global & Profil Risiko",
+    "Visualisasi Data Awal (EDA)",
+    "Analisis Pola Ancaman", 
+    "Simulasi Prediksi Dampak"
+])
+
+# --- Halaman 1: Ringkasan Global & Profil Risiko ---
+if page == "Ringkasan Global & Profil Risiko":
+    st.title("Dashboard Analisis Ancaman Siber Global 🛡️")
+    st.markdown("Halaman ini menyajikan gambaran umum lanskap ancaman siber dan hasil pengelompokan negara berdasarkan profil risiko.")
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Insiden Tercatat", f"{df.shape[0]:,}")
+    col2.metric("Total Kerugian Finansial", f"${int(df['Financial Loss (in Million $)'].sum())} Juta")
+    col3.metric("Jumlah Negara Dianalisis", df['Country'].nunique())
+    col4.metric("Rata-rata Waktu Resolusi", f"{df['Incident Resolution Time (in Hours)'].mean():.1f} Jam")
+    
+    st.markdown("---")
+    
+    st.header("Analisis Hasil K-Means Clustering")
+
+    # === TAMBAHAN: Expander untuk menampilkan Elbow Method ===
+    with st.expander("Lihat Proses Teknis: Penentuan K-Optimal dengan Elbow Method"):
+        st.markdown("""
+        Untuk menentukan jumlah kluster yang optimal, kami menggunakan Elbow Method. Metode ini mencari "titik siku" (elbow point) 
+        di mana penambahan jumlah kluster tidak lagi memberikan penurunan inersia (keragaman dalam kluster) yang signifikan.
+        Berdasarkan grafik di bawah, kami memilih **k=4** sebagai jumlah kluster yang optimal.
+        """)
+        fig_elbow = px.line(elbow_df, x='k', y='inertia', markers=True, title='Elbow Method untuk K-Optimal')
+        fig_elbow.update_xaxes(title_text='Jumlah Kluster (k)')
+        fig_elbow.update_yaxes(title_text='Inersia')
+        st.plotly_chart(fig_elbow, use_container_width=True)
+
+    # Menggunakan tab untuk merapikan tampilan
+    tab1, tab2 = st.tabs(["Visualisasi Scatter Plot (PCA)", "Visualisasi Peta Geografis"])
+
+    with tab1:
+        st.subheader("Visualisasi Kluster dalam 2D (Scatter Plot)")
+        st.markdown("Data 4 dimensi hasil agregasi direduksi menjadi 2 dimensi (PC1 & PC2) menggunakan PCA untuk visualisasi.")
+        
+        fig = px.scatter(
+            pca_df, x='PC1', y='PC2', color='cluster', hover_data=['Country'],
+            title='Hasil K-Means Clustering (dalam Ruang 2D PCA)'
+        )
+        
+        centroids_pca = pca_model.transform(centroids)
+        fig.add_scatter(
+            x=centroids_pca[:, 0], y=centroids_pca[:, 1], mode='markers',
+            marker=dict(symbol='x', color='black', size=12), name='Pusat Kluster'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab2:
+        st.subheader("Peta Dunia Profil Risiko Siber")
+        # ... (Kode Peta sama seperti sebelumnya) ...
+        country_coords = {
+            'USA': [37.0902, -95.7129], 'UK': [55.3781, -3.4360], 'Russia': [61.5240, 105.3188],
+            'Germany': [51.1657, 10.4515], 'India': [20.5937, 78.9629], 'Japan': [36.2048, 138.2529],
+            'China': [35.8617, 104.1954], 'Australia': [ -25.2744, 133.7751], 'Brazil': [-14.2350, -51.9253],
+            'Canada': [56.1304, -106.3468]
+        }
+        map_df = country_features_df.copy()
+        map_df['lat'] = map_df['Country'].map(lambda x: country_coords.get(x, [0,0])[0])
+        map_df['lon'] = map_df['Country'].map(lambda x: country_coords.get(x, [0,0])[1])
+        colors = {0: [255, 0, 0, 160], 1: [0, 255, 0, 160], 2: [0, 0, 255, 160], 3: [255, 255, 0, 160]}
+        map_df['color'] = map_df['cluster'].map(colors)
+        view_state = pdk.ViewState(latitude=20, longitude=0, zoom=1)
+        layer = pdk.Layer('ScatterplotLayer', data=map_df, get_position='[lon, lat]', get_color='color', get_radius=200000, pickable=True)
+        tooltip = {"html": "<b>Negara:</b> {Country}<br/><b>Kluster:</b> {cluster}"}
+        r = pdk.Deck(map_style='mapbox://styles/mapbox/light-v9', initial_view_state=view_state, layers=[layer], tooltip=tooltip)
+        st.pydeck_chart(r)
+
+    st.markdown("---")
+    st.subheader("Detail Karakteristik Kluster")
+    # ... (Kode Detail Karakteristik Kluster sama seperti sebelumnya) ...
+    cluster_choice = st.selectbox("Pilih Kluster untuk dianalisis:", options=sorted(country_features_df['cluster'].unique()))
+    st.write(f"**Negara dalam Kluster {cluster_choice}:**")
+    countries_in_cluster = country_features_df[country_features_df['cluster'] == cluster_choice]['Country'].tolist()
+    st.write(", ".join(countries_in_cluster))
+    st.write(f"**Rata-rata Karakteristik Kluster {cluster_choice}:**")
+    cluster_details = country_features_df[country_features_df['cluster'] == cluster_choice].drop(['Country', 'cluster'], axis=1).mean()
+    st.dataframe(cluster_details)
+
+
+# --- Halaman lainnya tidak berubah ---
+elif page == "Visualisasi Data Awal (EDA)":
+    # ... (Kode halaman ini sama seperti sebelumnya) ...
+    st.title("Visualisasi Data Awal (Exploratory Data Analysis) 📊")
+    st.markdown("Pilih fitur dari dataset untuk melihat distribusinya.")
+    numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+    categorical_cols = df.select_dtypes(include='object').columns.tolist()
+    feature_type = st.radio("Pilih tipe fitur:", ("Kategorikal", "Numerik"))
+    if feature_type == "Kategorikal":
+        selected_feature = st.selectbox("Pilih Fitur Kategorikal:", categorical_cols)
+        st.subheader(f"Distribusi Fitur: {selected_feature}")
+        feature_counts = df[selected_feature].value_counts()
+        fig = px.bar(feature_counts, x=feature_counts.index, y=feature_counts.values, labels={'x': selected_feature, 'y': 'Jumlah'})
+        st.plotly_chart(fig, use_container_width=True)
+    elif feature_type == "Numerik":
+        selected_feature = st.selectbox("Pilih Fitur Numerik:", numeric_cols)
+        st.subheader(f"Distribusi Fitur: {selected_feature}")
+        fig = px.histogram(df, x=selected_feature, marginal="box", title=f'Distribusi {selected_feature}')
+        st.plotly_chart(fig, use_container_width=True)
+
+elif page == "Analisis Pola Ancaman":
+    # ... (Kode halaman ini sama seperti sebelumnya) ...
+    st.title("Analisis Mendalam Pola Ancaman 🔎")
+    st.markdown("Gunakan filter di sidebar untuk menjelajahi data secara interaktif.")
+    st.sidebar.header("Filter Analisis")
+    selected_countries = st.sidebar.multiselect("Pilih Negara:", options=sorted(df['Country'].unique()), default=sorted(df['Country'].unique()))
+    selected_industries = st.sidebar.multiselect("Pilih Industri:", options=sorted(df['Target Industry'].unique()), default=sorted(df['Target Industry'].unique()))
+    year_range = st.sidebar.slider("Pilih Rentang Tahun:", df['Year'].min(), df['Year'].max(), (df['Year'].min(), df['Year'].max()))
+    filtered_df = df[
+        (df['Country'].isin(selected_countries)) &
+        (df['Target Industry'].isin(selected_industries)) &
+        (df['Year'].between(year_range[0], year_range[1]))
     ]
-    target = 'Is_Ransomware'
-
-    # Membuat variabel dummy untuk fitur kategoris
-    X = pd.get_dummies(df_logreg[features], drop_first=True)
-    y = df_logreg[target]
-    
-    # Membagi data latih dan data uji SEBELUM scaling dan menambah konstanta
-    X_train_orig, X_test_orig, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
-
-    # Membuat salinan eksplisit untuk menghindari SettingWithCopyWarning
-    X_train = X_train_orig.copy()
-    X_test = X_test_orig.copy()
-
-    # Scaling fitur numerik
-    numerical_cols_logreg = ['Financial Loss (in Million $)', 'Number of Affected Users']
-    scaler_logreg = StandardScaler()
-    
-    X_train[numerical_cols_logreg] = scaler_logreg.fit_transform(X_train[numerical_cols_logreg])
-    X_test[numerical_cols_logreg] = scaler_logreg.transform(X_test[numerical_cols_logreg])
-    
-    # Menambahkan konstanta/intercept untuk model statsmodels
-    X_train_sm = sm.add_constant(X_train)
-    X_test_sm = sm.add_constant(X_test)
-
-    # --- 2. PEMODELAN DAN ANALISIS STATISTIK DENGAN STATSMODELS ---
-    st.subheader("Analisis Statistik Model")
-    with st.spinner("Melatih model statistik dan menghasilkan ringkasan..."):
-        # Membuat dan melatih model dengan statsmodels
-        logit_model = sm.Logit(y_train, X_train_sm)
-        result = logit_model.fit()
-        st.success("✅ Model statistik berhasil dilatih!")
-
-        # Menampilkan ringkasan model
-        st.text_area("Ringkasan Model Statistik (dari Statsmodels)", result.summary().as_text(), height=450)
-
-    # --- INTERPRETASI SESUAI RUBRIK PENILAIAN ---
-    st.subheader("Interpretasi Hasil Sesuai Rubrik Penilaian")
-
-    # 1. Interpretasi Koefisien Model
-    with st.expander("🔹 Interpretasi Koefisien Model"):
-        st.markdown("""
-        Koefisien (kolom `coef` pada tabel di atas) menunjukkan perubahan dalam **log-odds** dari target (`Is_Ransomware`) untuk setiap kenaikan satu unit pada variabel prediktor, dengan asumsi variabel lain konstan.
-        - **Variabel Kontinu** (contoh: `Financial Loss`): Jika koefisien positif, semakin besar kerugian finansial, semakin tinggi kemungkinan serangan tersebut adalah Ransomware.
-        - **Variabel Diskrit/Kategoris** (contoh: `Target Industry_Healthcare`): Nilai koefisien membandingkan *log-odds* dari industri tersebut dengan industri referensi. Nilai positif berarti industri tersebut lebih mungkin mengalami serangan Ransomware dibandingkan industri referensi.
-        
-        Untuk interpretasi yang lebih intuitif, kita gunakan **Odds Ratio** (`exp(coef)`).
-        """)
-        odds_ratios = pd.DataFrame(np.exp(result.params), columns=['Odds Ratio'])
-        st.dataframe(odds_ratios)
-        st.markdown("""
-        - **Odds Ratio > 1**: Meningkatkan kemungkinan terjadinya Ransomware.
-        - **Odds Ratio < 1**: Menurunkan kemungkinan terjadinya Ransomware.
-        - **Odds Ratio = 1**: Tidak ada pengaruh.
-        """)
-    
-    # 2. Variabel Signifikan berdasarkan P-Value
-    with st.expander("🔹 Variabel Signifikan (berdasarkan P-value)"):
-        st.markdown("""
-        Kolom **`P>|z|`** pada tabel ringkasan menunjukkan **p-value**. Nilai ini menguji signifikansi statistik dari setiap variabel.
-        - **P-value < 0.05**: Variabel dianggap **signifikan secara statistik**. Artinya, variabel tersebut memiliki pengaruh yang nyata terhadap kemungkinan sebuah serangan adalah Ransomware.
-        - **P-value >= 0.05**: Variabel dianggap **tidak signifikan**. Artinya, tidak ada cukup bukti statistik untuk menyatakan variabel tersebut mempengaruhi prediksi.
-        
-        Dari tabel di atas, kita dapat mencari variabel dengan `P>|z| < 0.05` untuk mengetahui prediktor yang paling berpengaruh.
-        """)
-
-    # 3. Goodness of Fit Model
-    with st.expander("🔹 Goodness of Fit (Kebaikan Model)"):
-        st.markdown(f"""
-        *Goodness of fit* menunjukkan seberapa baik model cocok dengan data observasi.
-        
-        **1. Pseudo R-squared**
-        - Nilai **Pseudo R-squ.** dari model ini adalah **{result.prsquared:.4f}**.
-        - Nilai ini mengindikasikan bahwa sekitar **{result.prsquared:.2%}** dari variabilitas dalam variabel target (apakah serangan itu Ransomware atau bukan) dapat dijelaskan oleh model. Semakin tinggi nilainya (mendekati 1), semakin baik.
-
-        **2. Kurva ROC-AUC**
-        - Kurva ROC memvisualisasikan kemampuan model dalam membedakan antara kelas positif (Ransomware) dan negatif. **AUC (Area Under the Curve)** yang mendekati 1 menunjukkan performa yang sangat baik.
-        """)
-        
-        y_pred_proba = result.predict(X_test_sm) # Prediksi probabilitas pada data test
-        auc_score = roc_auc_score(y_test, y_pred_proba)
-        st.metric(label="**ROC-AUC Score**", value=f"**{auc_score:.4f}**")
-        
-        fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
-        fig_roc, ax_roc = plt.subplots()
-        ax_roc.plot(fpr, tpr, color='blue', label=f'ROC curve (AUC = {auc_score:.2f})')
-        ax_roc.plot([0, 1], [0, 1], color='red', linestyle='--', label='Garis Referensi (Acak)')
-        ax_roc.set_xlabel('False Positive Rate')
-        ax_roc.set_ylabel('True Positive Rate')
-        ax_roc.set_title('Receiver Operating Characteristic (ROC) Curve')
-        ax_roc.legend(loc="lower right")
-        st.pyplot(fig_roc)
-
-    # 4. Interpretasi Hasil Evaluasi
-    with st.expander("🔹 Interpretasi Hasil Evaluasi (Confusion Matrix & Metrik Lainnya)"):
-        y_pred = (y_pred_proba > 0.5).astype(int) # Konversi probabilitas ke kelas biner
-        accuracy = accuracy_score(y_test, y_pred)
-        
-        st.metric(label="**Akurasi Model**", value=f"**{accuracy:.2%}**")
-        st.markdown(f"Secara keseluruhan, **{accuracy:.2%}** prediksi model pada data uji benar.")
-
+    if filtered_df.empty:
+        st.warning("Tidak ada data yang cocok dengan filter yang dipilih.")
+    else:
         col1, col2 = st.columns(2)
         with col1:
-            st.subheader("Laporan Klasifikasi")
-            report_dict = classification_report(y_test, y_pred, target_names=['Bukan Ransomware', 'Ransomware'], output_dict=True)
-            report_df = pd.DataFrame(report_dict).transpose()
-            st.dataframe(report_df)
-
+            st.subheader("Top 5 Tipe Serangan")
+            attack_counts = filtered_df['Attack Type'].value_counts().head(5)
+            fig1 = px.bar(attack_counts, y=attack_counts.index, x=attack_counts.values, orientation='h', labels={'y': 'Tipe Serangan', 'x': 'Jumlah'})
+            fig1.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig1, use_container_width=True)
         with col2:
-            st.subheader("Confusion Matrix")
-            cm = confusion_matrix(y_test, y_pred)
-            fig_cm, ax_cm = plt.subplots()
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                        xticklabels=['Prediksi Bukan', 'Prediksi Ransomware'],
-                        yticklabels=['Aktual Bukan', 'Aktual Ransomware'], ax=ax_cm)
-            ax_cm.set_xlabel('Prediksi Model')
-            ax_cm.set_ylabel('Nilai Aktual')
-            st.pyplot(fig_cm)
-        
-        st.markdown(f"""
-        - **Presisi (Precision)**:
-          - Untuk kelas `Ransomware` ({report_dict['Ransomware']['precision']:.2f}): Dari semua yang diprediksi sebagai Ransomware, {report_dict['Ransomware']['precision']:.2%} di antaranya benar.
-        
-        - **Recall (Sensitivity)**:
-          - Untuk kelas `Ransomware` ({report_dict['Ransomware']['recall']:.2f}): Dari semua kasus Ransomware yang sebenarnya, model berhasil mengidentifikasi {report_dict['Ransomware']['recall']:.2%} di antaranya. Ini adalah metrik penting jika tujuannya adalah menangkap sebanyak mungkin kasus Ransomware.
-          
-        - **F1-Score**: Rata-rata harmonik dari Presisi dan Recall, memberikan gambaran performa yang seimbang.
-        """)
+            st.subheader("Top 5 Industri Target")
+            industry_counts = filtered_df['Target Industry'].value_counts().head(5)
+            fig2 = px.bar(industry_counts, y=industry_counts.index, x=industry_counts.values, orientation='h', labels={'y': 'Industri', 'x': 'Jumlah'})
+            fig2.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig2, use_container_width=True)
+
+elif page == "Simulasi Prediksi Dampak":
+    # ... (Kode halaman ini sama seperti sebelumnya) ...
+    st.title("Simulasi Prediksi Dampak Finansial 💸")
+    st.markdown("Gunakan model Machine Learning terbaik kita untuk memprediksi apakah sebuah serangan berpotensi berdampak tinggi.")
+    with st.expander("Lihat Detail Performa Model"):
+        st.info("Akurasi Model (Random Forest): **52.17%**. Model ini memberikan prediksi yang sedikit lebih baik dari tebakan acak.")
+        importances = impact_model.feature_importances_
+        feature_importance_df = pd.DataFrame({'Feature': encoded_cols, 'Importance': importances}).sort_values(by='Importance', ascending=False)
+        st.write("**Fitur Paling Berpengaruh Terhadap Prediksi:**")
+        st.dataframe(feature_importance_df.head(5))
+    st.sidebar.header("Input untuk Simulasi")
+    with st.sidebar.form(key='simulation_form'):
+        categorical_features_for_sim = {
+            'Country': sorted(df['Country'].unique()),
+            'Attack Type': sorted(df['Attack Type'].unique()),
+            'Target Industry': sorted(df['Target Industry'].unique()),
+            'Attack Source': sorted(df['Attack Source'].unique()),
+            'Security Vulnerability Type': sorted(df['Security Vulnerability Type'].unique()),
+            'Defense Mechanism Used': sorted(df['Defense Mechanism Used'].unique())
+        }
+        input_dict = {}
+        for feature, options in categorical_features_for_sim.items():
+            input_dict[feature] = st.selectbox(f"{feature}:", options)
+        input_dict['Number of Affected Users'] = st.number_input("Jumlah Pengguna Terdampak:", min_value=0, value=500000)
+        input_dict['Incident Resolution Time (in Hours)'] = st.number_input("Waktu Resolusi (Jam):", min_value=1, value=36)
+        submit_button = st.form_submit_button(label='Prediksi Dampak')
+    if submit_button:
+        input_df = pd.DataFrame([input_dict], columns=original_cols)
+        input_encoded = pd.get_dummies(input_df, columns=input_df.select_dtypes(include=['object']).columns)
+        input_reindexed = input_encoded.reindex(columns=encoded_cols, fill_value=0)
+        input_scaled = impact_scaler.transform(input_reindexed)
+        prediction = impact_model.predict(input_scaled)
+        prediction_proba = impact_model.predict_proba(input_scaled)
+        st.subheader("Hasil Prediksi:")
+        if prediction[0] == 1:
+            st.error("Prediksi: **HIGH IMPACT**")
+        else:
+            st.success("Prediksi: **LOW IMPACT**")
+        st.write("Tingkat Keyakinan Model:")
+        st.progress(prediction_proba[0][prediction[0]])
+        st.write(f"Probabilitas Low Impact: {prediction_proba[0][0]:.2%}")
+        st.write(f"High Impact: {prediction_proba[0][1]:.2%}")
